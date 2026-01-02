@@ -62,13 +62,14 @@ class TestGateway(unittest.TestCase):
 
         # Consume the 5 allowed requests
         for _ in range(5):
-            response = requests.get(f"{self.BASE_URL}/posts/1", headers=headers)
+            # Partner B has access to /users, not /posts
+            response = requests.get(f"{self.BASE_URL}/users/1", headers=headers)
             if response.status_code == 429:
                 self.fail("Rate limit triggered too early")
             self.assertEqual(response.status_code, 200)
 
         # The 6th should fail
-        response = requests.get(f"{self.BASE_URL}/posts/1", headers=headers)
+        response = requests.get(f"{self.BASE_URL}/users/1", headers=headers)
         self.assertEqual(response.status_code, 429)
         self.assertIn("Rate limit exceeded", response.text)
 
@@ -80,6 +81,35 @@ class TestGateway(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         data = response.json()
         self.assertEqual(data["title"], "foo")
+
+    def test_permission_allowed(self):
+        # Partner A has access to /posts
+        headers = {"X-API-Key": "key_a"}
+        response = requests.get(f"{self.BASE_URL}/posts/1", headers=headers)
+        self.assertEqual(response.status_code, 200)
+
+    def test_permission_denied(self):
+        # Partner A does NOT have access to /users
+        headers = {"X-API-Key": "key_a"}
+        response = requests.get(f"{self.BASE_URL}/users/1", headers=headers)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Access denied", response.text)
+
+    def test_usage_tracking(self):
+        # Make a request and verify it appears in the DB
+        import sqlite3
+        conn = sqlite3.connect("gateway.db")
+        cursor = conn.execute("SELECT COUNT(*) FROM api_usage")
+        initial_count = cursor.fetchone()[0]
+
+        headers = {"X-API-Key": "god_mode"}
+        requests.get(f"{self.BASE_URL}/todos/1", headers=headers)
+
+        cursor = conn.execute("SELECT COUNT(*) FROM api_usage")
+        final_count = cursor.fetchone()[0]
+        conn.close()
+
+        self.assertEqual(final_count, initial_count + 1)
 
 if __name__ == "__main__":
     unittest.main()
